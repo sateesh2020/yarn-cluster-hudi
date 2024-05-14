@@ -1,0 +1,11 @@
+ipython
+pandas
+pyarrow
+numpy
+pyspark==3.4.2
+dbt-core
+dbt-spark[PyHive]
+dbt-trino
+dbt-postgres
+trino
+jupyter

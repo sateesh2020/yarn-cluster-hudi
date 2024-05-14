@@ -1,0 +1,39 @@
+version: "3.8"
+
+services:
+  metastore-postgresql:
+    image: metastore-postgres:11
+    hostname: metastore-postgresql
+    container_name: metastore-postgresql
+    # ports:
+    #   - 5433:5432
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    networks:
+      - hadoop_network
+
+  hiveserver:
+    image: hadoop-hive-base:3.1.3
+    #image: hadoop-hive-base:2.3.9
+    hostname: hiveserver
+    container_name: hiveserver
+    env_file:
+      - ./hadoop.env
+    # command: sleep infinity
+    # tty: true
+    # stdin_open: true
+    # environment:
+    #   SERVICE_PRECONDITION: "hivemetastore:9083"
+    ports:
+      - "10000:10000"
+      #- "10001:10001"
+      - "10002:10002"
+      - 9083:9083
+    networks:
+      - hadoop_network
+
+networks:
+  hadoop_network:
+    name: hadoop_network
+    external: true

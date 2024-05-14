@@ -1,0 +1,69 @@
+version: '3.8'
+
+services:
+  spark-yarn-master:
+    image: da-spark-yarn-image
+    container_name: spark-yarn-master
+    hostname: spark-yarn-master
+    build:
+      dockerfile: Dockerfile-yarn
+      context: .
+    image: da-spark-yarn-image
+    entrypoint: ['./entrypoint.sh', 'master']
+    networks:
+      - yarn_network
+    volumes:
+      - ./book_data:/opt/spark/data
+      - ./spark_apps:/opt/spark/apps
+    env_file:
+      - .env.spark
+    ports:
+      - '9090:8080'
+      - '9870:9870'
+      - '7077:7077'
+      - '8088:8088'
+      - '8030-8040:8030-8040'
+
+
+  spark-yarn-worker:
+    container_name: spark-yarn-worker
+    hostname: spark-yarn-worker
+    build:
+      dockerfile: Dockerfile-yarn
+      context: .
+    entrypoint: ['./entrypoint.sh', 'worker']
+    ports:
+      - 8042:8042
+      - 9864:9864
+    networks:
+      - yarn_network
+    depends_on:
+      - spark-yarn-master
+    env_file:
+      - .env.spark
+    volumes:
+      - ./book_data:/opt/spark/data
+      - ./spark_apps:/opt/spark/apps
+
+  yarn-history-server:
+    container_name: spark-yarn-history
+    hostname: spark-yarn-history
+    build:
+      dockerfile: Dockerfile-yarn
+      context: .
+    entrypoint: ['./entrypoint.sh', 'adhoc']
+    networks:
+      - yarn_network
+    depends_on:
+      - spark-yarn-master
+    env_file:
+      - .env.spark
+    ports:
+      - '18080:18080'
+      - '10000:10000'
+      - '8888:8888'
+
+networks:
+  yarn_network:
+    name: yarn_network
+    external: true

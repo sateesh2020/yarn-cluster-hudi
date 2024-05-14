@@ -1,0 +1,46 @@
+version: "3.8"
+
+services:
+  trino-coordinator:
+    container_name: trino-coordinator
+    hostname: trino-coordinator
+    image: trino-coordinator:368
+    #network_mode: host
+    ports:
+      - "8091:8091"
+    networks:
+      - hadoop_network
+    restart: on-failure
+    volumes:
+      - /apps/cdp-volume/trino-coordinator:/usr/local/trino/data
+    # command: bash -c "sleep infinity"
+    # tty: true
+    # stdin_open: true
+    command: http://trino-coordinator:8091 trino-coordinator
+
+  trino-worker:
+    container_name: trino-worker
+    hostname: trino-worker
+    image: trino-worker:368
+    #network_mode: host
+    ports:
+      - "8092:8092"
+    networks:
+      - hadoop_network
+    restart: on-failure
+    volumes:
+      - /apps/cdp-volume/trino-worker:/usr/local/trino/data
+    depends_on: ["trino-coordinator"]
+    # command: bash -c "sleep infinity"
+    # tty: true
+    # stdin_open: true
+    command: http://trino-coordinator:8091 trino-worker
+
+# volumes:
+#   trino-coordinator:
+#   trino-worker:
+
+networks:
+  hadoop_network:
+    name: hadoop_network
+    external: true

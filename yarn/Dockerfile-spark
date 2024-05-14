@@ -1,0 +1,209 @@
+FROM openjdk:8u212-jdk-slim-stretch as jdk
+
+FROM python:3.9
+
+USER root
+
+# --------------------------------------------------------
+# JAVA
+# --------------------------------------------------------
+# RUN 
+RUN apt update && apt-get install -y --no-install-recommends \
+    python3-launchpadlib \
+    software-properties-common
+
+COPY --from=jdk /usr/local/openjdk-8 /usr/lib/jvm/java-8-openjdk-arm64/
+ENV JAVA_HOME=/usr/lib/jvm/java-8-openjdk-arm64/
+ENV PATH $JAVA_HOME/bin/:$PATH
+
+# --------------------------------------------------------
+# HADOOP
+# --------------------------------------------------------
+ARG HADOOP_VERSION=3.3.6
+ENV HADOOP_URL=https://downloads.apache.org/hadoop/common/hadoop-$HADOOP_VERSION/hadoop-$HADOOP_VERSION.tar.gz
+ENV HADOOP_HOME=/opt/hadoop
+ENV HADOOP_PREFIX=/opt/hadoop
+ENV HADOOP_CONF_DIR=/etc/hadoop
+# Adding Hadoop to Path
+ENV PATH $HADOOP_PREFIX/bin/:$PATH
+ENV PATH $HADOOP_HOME/bin/:$PATH
+#ENV PATH=$HADOOP_HOME/sbin:$HADOOP_HOME/bin:$PATH
+ENV LD_LIBRARY_PATH=$HADOOP_HOME/lib/native:$LD_LIBRARY_PATH
+ENV MULTIHOMED_NETWORK=1
+
+ENV USER=root
+
+# Download and extract hadoop
+COPY tars/hadoop-3.3.6.tar.gz /tmp/
+RUN set -x \
+    && mkdir -p $HADOOP_HOME  \
+    && tar -xf /tmp/hadoop-3.3.6.tar.gz -C $HADOOP_HOME --strip-components 1 \
+    && mkdir $HADOOP_HOME/logs \
+    && rm -rf /tmp/hadoop-3.3.6.tar.gz
+
+# RUN set -x \
+#  && mkdir $HADOOP_HOME  \
+#  && curl -fSL $HADOOP_URL -o /tmp/hadoop.tar.gz \
+#  && tar -xf /tmp/hadoop.tar.gz -C $HADOOP_HOME --strip-components 1 \
+#  && mkdir $HADOOP_HOME/logs \
+#  && rm /tmp/hadoop*
+
+RUN ln -s /opt/hadoop/etc/hadoop /etc/hadoop
+RUN mkdir /hadoop-data
+
+
+# --------------------------------------------------------
+# SPARK
+# --------------------------------------------------------
+
+ENV SPARK_VERSION spark-3.4.2
+ENV SPARK_URL https://downloads.apache.org/spark/${SPARK_VERSION}/${SPARK_VERSION}-bin-hadoop3.tgz
+ENV SPARK_HOME=/opt/spark
+ENV SPARK_CONF_DIR ${SPARK_HOME}/conf
+ENV PATH $SPARK_HOME/bin:$PATH
+
+# Download and install Spark
+COPY tars/spark-3.4.2-bin-hadoop3.tgz /tmp/
+
+RUN set -x \
+    && mkdir -p $SPARK_HOME \
+    && tar -xf /tmp/spark-3.4.2-bin-hadoop3.tgz -C $SPARK_HOME --strip-components 1 \
+    && rm -rf /tmp/spark-3.4.2-bin-hadoop3.tgz
+
+# RUN echo "Installing Spark-version ($SPARK_VERSION)" \
+#      && mkdir $SPARK_HOME  \
+#      && curl -fSL ${SPARK_URL} -o /tmp/spark.tgz \
+#      && tar -xvzf /tmp/spark.tgz -C $SPARK_HOME --strip-components 1 \
+#      && mkdir $SPARK_HOME/logs \
+#      && curl -kfsSL https://jdbc.postgresql.org/download/postgresql-42.5.0.jar -o $SPARK_HOME/jars/postgresql-42.3.2.jar \
+#      && rm /tmp/spark* 
+
+# Without this spark-shell fails - Download if it is not already there in $SPARK_INSTALL
+RUN wget -nc -q -O "${SPARK_HOME}/jars/jersey-bundle-1.19.4.jar" "https://repo1.maven.org/maven2/com/sun/jersey/jersey-bundle/1.19.4/jersey-bundle-1.19.4.jar"
+
+ENV ENABLE_INIT_DAEMON true
+ENV INIT_DAEMON_BASE_URI http://identifier/init-daemon
+ENV INIT_DAEMON_STEP spark_master_init
+# Fix the value of PYTHONHASHSEED
+# Note: this is needed when you use Python 3.3 or greater
+ENV PYTHONHASHSEED 1
+# Make the binaries and scripts executable and set the PYTHONPATH environment variable
+RUN chmod u+x /opt/spark/sbin/* && \
+    chmod u+x /opt/spark/bin/*
+
+ENV PYTHONPATH=$SPARK_HOME/python/:$PYTHONPATH
+
+# --------------------------------------------------------
+# HIVE
+# --------------------------------------------------------
+
+ENV HIVE_HOME /opt/hive
+ENV PATH $HIVE_HOME/bin:$PATH
+
+WORKDIR /opt
+
+ARG HIVE_VERSION=3.1.3
+ARG HIVE_URL=https://archive.apache.org/dist/hive/hive-$HIVE_VERSION/apache-hive-$HIVE_VERSION-bin.tar.gz
+ENV HIVE_VERSION ${HIVE_VERSION}
+ENV HIVE_URL ${HIVE_URL}
+
+#Install Hive MySQL, PostgreSQL JDBC
+RUN echo "Hive URL is :${HIVE_URL}" && wget ${HIVE_URL} -O hive.tar.gz && \
+    tar -xzvf hive.tar.gz && mv *hive*-bin hive && \
+    ln -s /usr/share/java/mysql-connector-java.jar $HIVE_HOME/lib/mysql-connector-java.jar && \
+    wget https://jdbc.postgresql.org/download/postgresql-9.4.1212.jar -O $HIVE_HOME/lib/postgresql-jdbc.jar && \
+    rm hive.tar.gz && mkdir -p /var/hoodie/ws/docker/hoodie/hadoop/hive_base/target/
+
+#Spark should be compiled with Hive to be able to use it
+#hive-site.xml should be copied to $SPARK_HOME/conf folder
+
+#Custom configuration goes here
+ADD conf/hive-site.xml $HADOOP_CONF_DIR
+ADD conf/beeline-log4j2.properties $HIVE_HOME/conf
+ADD conf/hive-env.sh $HIVE_HOME/conf
+ADD conf/hive-exec-log4j2.properties $HIVE_HOME/conf
+ADD conf/hive-log4j2.properties $HIVE_HOME/conf
+ADD conf/ivysettings.xml $HIVE_HOME/conf
+ADD conf/llap-daemon-log4j2.properties $HIVE_HOME/conf
+
+RUN pip install --default-timeout=100 --upgrade pip
+
+COPY requirements.txt /requirements.txt
+
+# run install
+RUN pip install -r /requirements.txt
+
+# Setup Hoodie Library jars
+RUN mkdir -p /opt/hudi-jars
+
+ARG HUDI_MR_URL=https://github.com/sateesh2020/hudi-jars/releases/download/hudi-0.14.1/hudi-hadoop-mr-bundle-0.14.1.jar
+ARG HUDI_SYNC_URL=https://github.com/sateesh2020/hudi-jars/releases/download/hudi-0.14.1/hudi-hive-sync-bundle-0.14.1.jar
+ARG HUDI_SPARK_URL=https://github.com/sateesh2020/hudi-jars/releases/download/hudi-0.14.1/hudi-spark3.4-bundle_2.12-0.14.1.jar
+ARG HUDI_UTIL_URL=https://github.com/sateesh2020/hudi-jars/releases/download/hudi-0.14.1/hudi-utilities-bundle_2.12-0.14.1.jar
+ARG HUDI_INTEG_URL=https://github.com/sateesh2020/hudi-jars/releases/download/hudi-0.14.1/hudi-integ-test-bundle-0.14.1.jar
+ARG HUDI_UTIL_SLIM_URL=https://github.com/sateesh2020/hudi-jars/releases/download/hudi-0.14.1/hudi-utilities-slim-bundle_2.12-0.14.1.jar
+
+
+RUN echo "Downloading Hudi Hadoop MR Bundle jar" && wget -O /opt/hudi-jars/hudi-hadoop-mr-bundle.jar ${HUDI_MR_URL}
+RUN echo "Downloading Hudi Hive Sync Bundle jar" && wget -O /opt/hudi-jars/hudi-hive-sync-bundle.jar ${HUDI_SYNC_URL}
+RUN echo "Downloading Hudi Spark Bundle jar" && wget -O /opt/hudi-jars/hudi-spark-bundle.jar ${HUDI_SPARK_URL} 
+RUN echo "Downloading Hudi Utilities Bundle jar" && wget -O /opt/hudi-jars/hudi-utilities.jar ${HUDI_UTIL_URL} 
+RUN echo "Downloading Hudi Utilities Slim Bundle jar" && wget -O /opt/hudi-jars/hudi-utilities-slim.jar ${HUDI_UTIL_SLIM_URL}
+RUN echo "Downloading Hudi Integ Test Bundle jar" && wget -O /opt/hudi-jars/hudi-integ-test-bundle.jar ${HUDI_INTEG_URL}
+
+# COPY jars/hudi-hadoop-mr-bundle-0.14.1.jar /opt/jars/hudi-hadoop-mr-bundle.jar
+# COPY jars/hudi-hive-sync-bundle-0.14.1.jar /opt/jars/hudi-hive-sync-bundle.jar
+# COPY jars/hudi-spark3.4-bundle_2.12-0.14.1.jar /opt/jars/hudi-spark-bundle.jar
+# COPY jars/hudi-utilities-bundle_2.12-0.14.1.jar /opt/jars/hudi-utilities.jar
+# COPY jars/hudi-utilities-slim-bundle_2.12-0.14.1.jar /opt/jars/hudi-utilities-slim.jar
+
+
+ENV HUDI_HADOOP_BUNDLE=/opt/hudi-jars/hudi-hadoop-mr-bundle.jar
+ENV HUDI_HIVE_SYNC_BUNDLE=/opt/hudi-jars/hudi-hive-sync-bundle.jar
+ENV HUDI_SPARK_BUNDLE=/opt/hudi-jars/hudi-spark-bundle.jar
+ENV HUDI_UTILITIES_BUNDLE=/opt/hudi-jars/hudi-utilities.jar
+ENV HUDI_INTEG_TEST_BUNDLE=/opt/hudi-jars/hudi-integ-test-bundle.jar
+ENV HUDI_UTILITIES_SLIM_BUNDLE=/opt/hudi-jars/hudi-utilities-slim.jar
+
+# Set user for HDFS and Yarn (for production probably not smart to put root)
+ENV HDFS_NAMENODE_USER="root"
+ENV HDFS_DATANODE_USER="root"
+ENV HDFS_SECONDARYNAMENODE_USER="root"
+ENV YARN_RESOURCEMANAGER_USER="root"
+ENV YARN_NODEMANAGER_USER="root"
+
+# Add JAVA_HOME to haddop-env.sh
+RUN echo "export JAVA_HOME=${JAVA_HOME}" >> \
+    "$HADOOP_HOME/etc/hadoop/hadoop-env.sh"
+
+ADD entrypoint.sh /entrypoint.sh
+RUN chmod a+x /entrypoint.sh
+
+COPY conf/core-site.xml $HADOOP_CONF_DIR/core-site.xml
+COPY conf/hdfs-site.xml $HADOOP_CONF_DIR/hdfs-site.xml
+COPY conf/mapred-site.xml $HADOOP_CONF_DIR/mapred-site.xml
+COPY conf/yarn-site.xml $HADOOP_CONF_DIR/yarn-site.xml
+
+COPY conf/spark-defaults.conf $SPARK_HOME/conf
+
+# ADD hadoop.env /hadoop.env
+
+# https://www.linode.com/docs/guides/how-to-install-and-set-up-hadoop-cluster/#distribute-authentication-key-pairs-for-the-hadoop-user
+RUN ssh-keygen -t rsa -P '' -f ~/.ssh/id_rsa && \
+    cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys && \
+    chmod 600 ~/.ssh/authorized_keys
+
+COPY ssh_config ~/.ssh/config
+
+ADD entrypoint.sh /entrypoint.sh
+RUN chmod a+x /entrypoint.sh
+
+ENV SPARK_JARS_HDFS_PATH=/spark/jars
+ENV SPARK_LOGS_HDFS_PATH=/spark-logs
+# Exposing a union of ports across hadoop versions
+# Well known ports including ssh
+# EXPOSE 0-1024 4040 7000-10100 5000-5100 50000-50200 58188 58088 58042 
+
+EXPOSE 22 4040
+
+ENTRYPOINT ["/bin/bash", "/entrypoint.sh"]
