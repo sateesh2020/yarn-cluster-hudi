@@ -1,3 +1,9 @@
+## Build Images
+
+```shell
+./build_images.sh
+```
+
 ## Running Services
 
 ### Yarn with Spark on Hadoop
@@ -6,7 +12,7 @@ More details on the [Yarn](yarn/Readme.md) page.
 
 ```shell
 cd yarn
-make run-yarn
+docker compose up --build -d
 
 ```
 
